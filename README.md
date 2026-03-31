@@ -2,19 +2,13 @@
 
 <img src="https://octodex.github.com/images/Professortocat_v2.png" align="right" height="200px" />
 
-Hey josevicenteayala!
+Hey github-classroom[bot]!
 
 Mona here. I'm done preparing your exercise. Hope you enjoy! 💚
 
 Remember, it's self-paced so feel free to take a break! ☕️
 
-[![](https://img.shields.io/badge/Go%20to%20Exercise-%E2%86%92-1f883d?style=for-the-badge&logo=github&labelColor=197935)](https://github.com/josevicenteayala/GitHubCourse/issues/12)
-
----
-
-### 🏫 Instructors
-
-Want to use this course in your classroom? See the **[Classroom Setup Guide](CLASSROOM_SETUP.md)** for step-by-step instructions on creating a GitHub Classroom assignment from this template.
+[![](https://img.shields.io/badge/Go%20to%20Exercise-%E2%86%92-1f883d?style=for-the-badge&logo=github&labelColor=197935)](https://github.com/Copilot-course-mvp/copilot-course-mvp-classroom-cxe-github-copilot-basics-GitHubCourse/issues/2)
 
 ---
 
