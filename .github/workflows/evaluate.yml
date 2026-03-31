@@ -1,0 +1,84 @@
+name: Evaluate Copilot Course
+
+on:
+  workflow_call:
+    outputs:
+      step:
+        description: "Detected step ID (e.g. step-01) or empty"
+        value: ${{ jobs.evaluate.outputs.step }}
+      status:
+        description: "Evaluation result: pass or fail"
+        value: ${{ jobs.evaluate.outputs.status }}
+      eval_output:
+        description: "Full evaluation output text"
+        value: ${{ jobs.evaluate.outputs.eval_output }}
+
+jobs:
+  evaluate:
+    runs-on: ubuntu-latest
+    outputs:
+      step: ${{ steps.detect.outputs.step }}
+      status: ${{ steps.eval.outputs.status }}
+      eval_output: ${{ steps.eval.outputs.eval_output }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Detect step
+        id: detect
+        env:
+          PR_LABELS: ${{ toJson(github.event.pull_request.labels.*.name) }}
+        run: |
+          STEP=""
+
+          # 1. Try PR labels (e.g. "step-01", "step-02") — collect all matches
+          if [ "$PR_LABELS" != "null" ] && [ "$PR_LABELS" != "[]" ]; then
+            STEP=$(echo "$PR_LABELS" | grep -oE 'step-[0-9]{2}' | sort -u | paste -sd ',' -)
+          fi
+
+          # 2. Fall back to branch name (e.g. "step-03/my-feature")
+          if [ -z "$STEP" ]; then
+            BRANCH="${GITHUB_HEAD_REF:-$GITHUB_REF_NAME}"
+            STEP=$(echo "$BRANCH" | grep -oE '^step-[0-9]{2}' || true)
+          fi
+
+          if [ -n "$STEP" ]; then
+            echo "step=$STEP" >> "$GITHUB_OUTPUT"
+            echo "Detected step: $STEP"
+          else
+            echo "step=" >> "$GITHUB_OUTPUT"
+            echo "No step detected — will evaluate all steps"
+          fi
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Run evaluator
+        id: eval
+        run: |
+          set +e
+          if [ -n "${{ steps.detect.outputs.step }}" ]; then
+            OUTPUT=$(python3 scripts/evaluate.py --step "${{ steps.detect.outputs.step }}" 2>&1)
+          else
+            OUTPUT=$(python3 scripts/evaluate.py 2>&1)
+          fi
+          EXIT_CODE=$?
+          set -e
+
+          echo "$OUTPUT"
+
+          if [ "$EXIT_CODE" = "0" ]; then
+            echo "status=pass" >> "$GITHUB_OUTPUT"
+          else
+            echo "status=fail" >> "$GITHUB_OUTPUT"
+          fi
+
+          # Store output for comment posting (multi-line safe)
+          {
+            echo "eval_output<<EOF"
+            echo "$OUTPUT"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+          exit $EXIT_CODE

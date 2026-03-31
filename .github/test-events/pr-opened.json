@@ -1,0 +1,18 @@
+{
+  "action": "opened",
+  "pull_request": {
+    "number": 999,
+    "head": {
+      "ref": "step-01/test-review",
+      "sha": "abc123"
+    },
+    "base": {
+      "ref": "main"
+    },
+    "labels": [],
+    "user": {
+      "login": "test-student"
+    },
+    "title": "Step 01 solution"
+  }
+}

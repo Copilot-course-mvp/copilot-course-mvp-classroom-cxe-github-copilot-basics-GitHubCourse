@@ -1,0 +1,148 @@
+name: AI PR Review
+
+on:
+  workflow_call:
+    inputs:
+      step:
+        description: "Step ID (e.g. step-01)"
+        required: true
+        type: string
+      pr_number:
+        description: "Pull request number"
+        required: true
+        type: number
+      repo:
+        description: "Repository full name (owner/repo)"
+        required: true
+        type: string
+      base_ref:
+        description: "Base branch name for diff"
+        required: true
+        type: string
+      head_sha:
+        description: "Head commit SHA for diff"
+        required: true
+        type: string
+      eval_output:
+        description: "Full evaluation output from evaluate.py"
+        required: false
+        type: string
+        default: ""
+    outputs:
+      verdict:
+        description: "AI review verdict: PASS or FAIL"
+        value: ${{ jobs.review.outputs.verdict }}
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    outputs:
+      verdict: ${{ steps.ai_review.outputs.verdict }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests openai
+
+      - name: Post missing-step notice
+        if: inputs.step == ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 scripts/post_comment.py \
+            --repo "${{ inputs.repo }}" \
+            --pr "${{ inputs.pr_number }}" \
+            --marker "ai-review-step-detection" \
+            --body "⚠️ **Could not detect a step identifier.**
+
+          Please use a branch name starting with \`step-XX\` (e.g. \`step-01/my-feature\`)
+          or add a label like \`step-01\` to this PR."
+
+      - name: Generate scoped diffs
+        if: inputs.step != ''
+        run: |
+          # Split comma-separated step IDs and generate a scoped diff per step
+          IFS=',' read -ra STEPS <<< "${{ inputs.step }}"
+          for STEP in "${STEPS[@]}"; do
+            STEP=$(echo "$STEP" | xargs)  # trim whitespace
+            # Find the matching step folder (e.g. step-01-code-completion/)
+            STEP_DIR=$(find . -maxdepth 1 -type d -name "${STEP}-*" | head -n1 | sed 's|^\./||')
+            if [ -z "$STEP_DIR" ]; then
+              echo "Warning: no folder found matching ${STEP}-*, skipping"
+              continue
+            fi
+            git diff "origin/${{ inputs.base_ref }}...${{ inputs.head_sha }}" -- "${STEP_DIR}/" > "/tmp/diff-${STEP}.txt"
+            echo "Generated scoped diff for ${STEP} (${STEP_DIR}/): $(wc -l < "/tmp/diff-${STEP}.txt") lines"
+          done
+
+      - name: Run AI review agent
+        if: inputs.step != ''
+        id: ai_review
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          MODELS_API_KEY: ${{ secrets.MODELS_API_KEY }}
+          EVAL_OUTPUT: ${{ inputs.eval_output }}
+        run: |
+          IFS=',' read -ra STEPS <<< "${{ inputs.step }}"
+          FINAL_VERDICT="PASS"
+
+          for STEP in "${STEPS[@]}"; do
+            STEP=$(echo "$STEP" | xargs)
+            DIFF_FILE="/tmp/diff-${STEP}.txt"
+
+            if [ ! -s "$DIFF_FILE" ]; then
+              echo "No changes found for ${STEP}, skipping review"
+              continue
+            fi
+
+            set +e
+            OUTPUT=$(python3 scripts/agent_reviewer.py \
+              "$DIFF_FILE" \
+              "$STEP" \
+              "${{ inputs.pr_number }}" \
+              "${{ inputs.repo }}" 2>&1)
+            EXIT_CODE=$?
+            set -e
+
+            echo "$OUTPUT"
+
+            # Parse VERDICT from agent output
+            VERDICT=$(echo "$OUTPUT" | grep -oP '^VERDICT=\K(PASS|FAIL)$' || echo "FAIL")
+
+            if [ "$VERDICT" = "FAIL" ]; then
+              FINAL_VERDICT="FAIL"
+            fi
+
+            # Exit code 2 = FAIL verdict (not a workflow error)
+            if [ "$EXIT_CODE" != "0" ] && [ "$EXIT_CODE" != "2" ]; then
+              echo "AI review agent error for ${STEP} (exit code $EXIT_CODE)"
+              exit 1
+            fi
+          done
+
+          echo "verdict=$FINAL_VERDICT" >> "$GITHUB_OUTPUT"
+
+      - name: Request Copilot review
+        if: inputs.step != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+        run: |
+          gh api \
+            --method POST \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ inputs.repo }}/pulls/${{ inputs.pr_number }}/requested_reviewers" \
+            -f '{"reviewers":["copilot"]}'  2>/dev/null || echo "Copilot reviewer request skipped (may not be available)"

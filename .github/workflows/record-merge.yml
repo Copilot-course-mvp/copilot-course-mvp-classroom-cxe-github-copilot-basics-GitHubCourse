@@ -1,0 +1,60 @@
+name: Record PR
+
+on:
+  workflow_call:
+    inputs:
+      pr_id:
+        description: "Pull request number"
+        required: true
+        type: number
+      title:
+        description: "Pull request title"
+        required: true
+        type: string
+      author:
+        description: "Pull request author login"
+        required: true
+        type: string
+      step:
+        description: "Step ID (e.g. step-01)"
+        required: true
+        type: string
+      status:
+        description: "Evaluation status (pass/fail)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install psycopg2-binary gspread google-auth
+
+      - name: Record to storage
+        env:
+          STORAGE_BACKEND: ${{ vars.STORAGE_BACKEND || 'sql' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STORAGE_CREDENTIALS: ${{ secrets.STORAGE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          APPROVED_AT=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+          python3 scripts/record_to_db.py \
+            --pr-id "${{ inputs.pr_id }}" \
+            --title "${{ inputs.title }}" \
+            --author "${{ inputs.author }}" \
+            --step "${{ inputs.step }}" \
+            --status "${{ inputs.status }}" \
+            --approved-at "$APPROVED_AT"

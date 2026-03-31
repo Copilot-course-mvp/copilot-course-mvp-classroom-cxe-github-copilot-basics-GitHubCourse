@@ -1,0 +1,129 @@
+name: PR Pipeline
+
+on:
+  pull_request:
+    types: [opened, synchronize]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  # ── Step 1: Run unit tests & evidence checks ──────────────────────────
+  evaluate:
+    uses: ./.github/workflows/evaluate.yml
+    secrets: inherit
+
+  # ── Post evaluation results as PR comment ──────────────────────────────
+  post-eval-results:
+    needs: evaluate
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install requests
+
+      - name: Post evaluation comment
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          STEP="${{ needs.evaluate.outputs.step }}"
+          STATUS="${{ needs.evaluate.outputs.status }}"
+
+          if [ "$STATUS" = "pass" ]; then
+            HEADER="✅ **All checks passed for \`$STEP\`**"
+          else
+            HEADER="❌ **Some checks failed for \`$STEP\`**"
+          fi
+
+          python3 scripts/post_comment.py \
+            --repo "${{ github.repository }}" \
+            --pr "${{ github.event.pull_request.number }}" \
+            --marker "ai-review-evaluation" \
+            --body "$HEADER
+
+          <details>
+          <summary>Evaluation Output</summary>
+
+          \`\`\`
+          ${{ needs.evaluate.outputs.eval_output }}
+          \`\`\`
+
+          </details>"
+
+  # ── Step 2: Check DB for existing review status ─────────────────────────
+  check-status:
+    needs: evaluate
+    if: needs.evaluate.outputs.step != ''
+    runs-on: ubuntu-latest
+    outputs:
+      review_status: ${{ steps.check.outputs.review_status }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: pip install psycopg2-binary gspread google-auth
+
+      - name: Check existing status
+        id: check
+        env:
+          STORAGE_BACKEND: ${{ vars.STORAGE_BACKEND || 'sql' }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          STORAGE_CREDENTIALS: ${{ secrets.STORAGE_CREDENTIALS }}
+          SPREADSHEET_ID: ${{ secrets.SPREADSHEET_ID }}
+        run: |
+          STATUS=$(python3 scripts/record_to_db.py --query \
+            --pr-id "${{ github.event.pull_request.number }}" \
+            --step "${{ needs.evaluate.outputs.step }}") || STATUS=""
+          echo "review_status=$STATUS" >> "$GITHUB_OUTPUT"
+          echo "Current DB review status: '$STATUS'"
+
+  # ── Step 3: Run AI review (only if not already passed) ─────────────────
+  ai-review:
+    needs: [evaluate, post-eval-results, check-status]
+    if: >-
+      needs.evaluate.outputs.status == 'pass'
+      && needs.check-status.outputs.review_status != 'pass'
+    uses: ./.github/workflows/ai-review.yml
+    with:
+      step: ${{ needs.evaluate.outputs.step }}
+      pr_number: ${{ github.event.pull_request.number }}
+      repo: ${{ github.repository }}
+      base_ref: ${{ github.base_ref }}
+      head_sha: ${{ github.event.pull_request.head.sha }}
+      eval_output: ${{ needs.evaluate.outputs.eval_output }}
+    secrets: inherit
+
+  # ── Step 4: Record PR status to persistent storage (always) ────────────
+  record:
+    needs: [evaluate, ai-review, check-status]
+    if: always() && needs.evaluate.outputs.step != ''
+    uses: ./.github/workflows/record-merge.yml
+    with:
+      pr_id: ${{ github.event.pull_request.number }}
+      title: ${{ github.event.pull_request.title }}
+      author: ${{ github.event.pull_request.user.login }}
+      step: ${{ needs.evaluate.outputs.step }}
+      status: >-
+        ${{
+          (needs.ai-review.outputs.verdict == 'PASS' && 'pass')
+          || (needs.ai-review.result == 'skipped'
+              && needs.check-status.outputs.review_status == 'pass'
+              && 'pass')
+          || 'fail'
+        }}
+    secrets: inherit
