@@ -1,0 +1,108 @@
+name: Step 0
+
+on:
+  workflow_dispatch:
+  create:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  actions: write
+  issues: write
+
+env:
+  STEP_1_FILE: ".github/steps/1-step.md"
+
+jobs:
+  start_exercise:
+    if: |
+      !github.event.repository.is_template &&
+      (github.event_name == 'create' || 
+       github.event_name == 'workflow_dispatch' ||
+       (!startsWith(github.event.head_commit.message, 'Complete step') &&
+        !startsWith(github.event.head_commit.message, 'step-')))
+    name: Start Exercise
+    uses: skills/exercise-toolkit/.github/workflows/start-exercise.yml@v0.8.1
+    with:
+      exercise-title: "GitHub Copilot Hands-On Course"
+      intro-message: "Practice the major GitHub Copilot capabilities through 7 hands-on Python exercises"
+
+  post_next_step_content:
+    name: Post next step content
+    runs-on: ubuntu-latest
+    needs: [start_exercise]
+    if: |
+      github.event_name == 'create' || 
+      github.event_name == 'workflow_dispatch' ||
+      (!startsWith(github.event.head_commit.message, 'Complete step') &&
+       !startsWith(github.event.head_commit.message, 'step-'))
+    env:
+      ISSUE_NUMBER: ${{ needs.start_exercise.outputs.issue-number }}
+      ISSUE_REPOSITORY: ${{ github.repository }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Update README with fork owner
+        run: |
+          sed -i \
+            -e "s|josevicenteayala/GitHubCourse|${{ github.repository }}|g" \
+            -e "s|josevicenteayala|${{ github.repository_owner }}|g" \
+            -e "s|/issues/[0-9]*|/issues/${{ env.ISSUE_NUMBER }}|g" \
+            README.md
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet || git commit -m "Update README for fork owner ${{ github.repository_owner }}"
+          git push
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Get response templates
+        uses: actions/checkout@v4
+        with:
+          repository: skills/exercise-toolkit
+          path: exercise-toolkit
+          ref: v0.8.1
+
+      - name: Create comment - add step content
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: ${{ env.STEP_1_FILE }}
+          vars: |
+            login: ${{ github.actor }}
+            full_repo_name: ${{ github.repository }}
+
+      - name: Create comment - watching for progress
+        uses: GrantBirki/comment@v2.1.1
+        with:
+          repository: ${{ env.ISSUE_REPOSITORY }}
+          issue-number: ${{ env.ISSUE_NUMBER }}
+          file: exercise-toolkit/markdown-templates/step-feedback/watching-for-progress.md
+
+  enable_step_1:
+    name: Enable Step 1 workflow
+    runs-on: ubuntu-latest
+    if: |
+      !github.event.repository.is_template &&
+      (github.event_name == 'create' || 
+       github.event_name == 'workflow_dispatch' ||
+       (!startsWith(github.event.head_commit.message, 'Complete step') &&
+        !startsWith(github.event.head_commit.message, 'step-')))
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enable Step 1
+        run: gh workflow enable "Step 1"
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
