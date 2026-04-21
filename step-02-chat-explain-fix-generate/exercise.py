@@ -5,19 +5,20 @@ def parse_scoreboard(raw: str) -> dict[str, int]:
 
     Invalid segments should be skipped.
     """
+
     board: dict[str, int] = {}
     if raw == "":
         return board
 
     parts = raw.split(",")
     for part in parts:
-        name, score = part.split(":")
-        name = name.lower()
-        value = int(score)
-        if name in board:
+        try:
+            name, score = part.split(":", 1)
+            name = name.lower()
+            value = int(score)
             board[name] = value
-        else:
-            board[name] = value
+        except ValueError:
+            continue
     return board
 
 
@@ -26,4 +27,8 @@ def top_player(board: dict[str, int]) -> tuple[str, int] | None:
 
     Keep this deterministic by sorting names alphabetically when scores tie.
     """
-    raise NotImplementedError("Implement using Copilot /generate")
+    if not board:
+        return None
+    max_score = max(board.values())
+    top_player_name = min(name for name, score in board.items() if score == max_score)
+    return (top_player_name, max_score)

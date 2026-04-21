@@ -1,27 +1,13 @@
 import re
-
-
 def normalize_username(name: str) -> str:
-    """Normalize a username.
-
-    Rules:
-    - Trim outer whitespace.
-    - Convert to lowercase.
-    - Replace spaces with underscores.
-    - Remove any character that is not a-z, 0-9, or underscore.
-    - Collapse repeated underscores into one underscore.
-    - Strip leading/trailing underscores.
-    """
-    raise NotImplementedError("Implement with Copilot code completion")
-
+    name = name.strip().lower()
+    name = re.sub(r'\s+', '_', name)  # Replace spaces with underscores
+    name = re.sub(r'[^a-z0-9_]', '', name)  # Remove invalid characters
+    name = re.sub(r'_{2,}', '_', name)  # Collapse repeated underscores
+    return name.strip('_')  # Strip leading/trailing underscores
 
 def build_slug(title: str) -> str:
-    """Convert a title into a URL-friendly slug.
+    title = title.lower()
+    title = re.sub(r'[^a-z0-9]+', '-', title)  # Replace non-alphanumeric with '-'
+    return title.strip('-')  # Strip leading/trailing '-'
 
-    Rules:
-    - Lowercase.
-    - Keep letters and digits.
-    - Replace any sequence of non-alphanumeric characters with a single '-'.
-    - Strip leading/trailing '-'.
-    """
-    raise NotImplementedError("Implement with Copilot code completion")
